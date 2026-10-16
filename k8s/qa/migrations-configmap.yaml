@@ -1,0 +1,40 @@
+apiVersion: v1
+data:
+  001_schema.sql: "CREATE TABLE IF NOT EXISTS classes (\r\n    id SERIAL PRIMARY KEY,\r\n
+    \   day TEXT NOT NULL CHECK (day IN ('mon','tue','wed','thu','fri','sat')),\r\n
+    \   -- minutes past midnight: comparing \"9:00\" to \"10:00\" as text does not
+    work\r\n    start_min INT NOT NULL CHECK (start_min >= 0 AND start_min < 1440),\r\n
+    \   end_min INT NOT NULL CHECK (end_min > 0 AND end_min <= 1440),\r\n    subject
+    TEXT NOT NULL,\r\n    teacher TEXT NOT NULL,\r\n    room TEXT NOT NULL,\r\n    batch
+    TEXT NOT NULL,\r\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\r\n    CHECK
+    (end_min > start_min));\r\n\r\nCREATE INDEX IF NOT EXISTS classes_day_time ON
+    classes (day, start_min);\r\nCREATE INDEX IF NOT EXISTS classes_teacher ON classes
+    (teacher, day, start_min);\r\nCREATE INDEX IF NOT EXISTS classes_room ON classes
+    (room, day, start_min);\r\nCREATE INDEX IF NOT EXISTS classes_batch ON classes
+    (batch, day, start_min);\r\n"
+  002_seed.sql: "-- A week that is already clash-free, so the first thing you add
+    is the\r\n-- first thing that can go wrong. Nothing here touches 13:00-14:00.\r\nINSERT
+    INTO classes (day, start_min, end_min, subject, teacher, room, batch)\r\nSELECT
+    * FROM (VALUES\r\n  ('mon', 540,  600,  'Database Systems',    'Prof Rao',     'A101',
+    'CSE-3A'),\r\n  ('mon', 600,  660,  'Operating Systems',   'Prof Iyer',    'A101',
+    'CSE-3B'),\r\n  ('mon', 660,  720,  'Computer Networks',   'Prof Nair',    'B201',
+    'CSE-3A'),\r\n  ('mon', 840,  960,  'DBMS Lab',            'Prof Rao',     'LAB1',
+    'CSE-3A'),\r\n  ('tue', 540,  600,  'Operating Systems',   'Prof Iyer',    'A101',
+    'CSE-3A'),\r\n  ('tue', 600,  690,  'Discrete Maths',      'Prof Menon',   'A102',
+    'CSE-3B'),\r\n  ('tue', 840,  900,  'Computer Networks',   'Prof Nair',    'B201',
+    'CSE-3B'),\r\n  ('wed', 540,  600,  'Database Systems',    'Prof Rao',     'A101',
+    'CSE-3B'),\r\n  ('wed', 630,  720,  'Software Engineering','Prof Dsouza',  'B202',
+    'CSE-3A'),\r\n  ('wed', 840,  960,  'Networks Lab',        'Prof Nair',    'LAB2',
+    'CSE-3B'),\r\n  ('thu', 540,  630,  'Discrete Maths',      'Prof Menon',   'A102',
+    'CSE-3A'),\r\n  ('thu', 660,  720,  'Operating Systems',   'Prof Iyer',    'A101',
+    'CSE-3B'),\r\n  ('thu', 840,  900,  'Software Engineering','Prof Dsouza',  'B202',
+    'CSE-3B'),\r\n  ('fri', 540,  600,  'Computer Networks',   'Prof Nair',    'B201',
+    'CSE-3A'),\r\n  ('fri', 600,  660,  'Database Systems',    'Prof Rao',     'A101',
+    'CSE-3A'),\r\n  ('fri', 840,  960,  'OS Lab',              'Prof Iyer',    'LAB1',
+    'CSE-3B'),\r\n  ('sat', 540,  660,  'Project Review',      'Prof Dsouza',  'B202',
+    'CSE-3A')\r\n) AS v(day, start_min, end_min, subject, teacher, room, batch)\r\nWHERE
+    NOT EXISTS (SELECT 1 FROM classes);\r\n"
+kind: ConfigMap
+metadata:
+  name: timetable-migrations
+  namespace: qa
