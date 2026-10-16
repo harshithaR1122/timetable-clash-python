@@ -1,0 +1,127 @@
+
+version: 2.1
+
+jobs:
+  lint:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install development dependencies
+          command: pip install -r requirements-dev.txt
+      - run:
+          name: Run Ruff
+          command: python -m ruff check app tests
+
+  unit-tests:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install development dependencies
+          command: pip install -r requirements-dev.txt
+      - run:
+          name: Run unit tests
+          command: python -m pytest tests/test_clashes.py --cov=app.clashes --cov-report=term-missing --cov-fail-under=70
+
+  integration-tests:
+    docker:
+      - image: cimg/python:3.12
+      - image: postgres:16.4
+        environment:
+          POSTGRES_DB: timetable
+          POSTGRES_USER: timetable_user
+          POSTGRES_PASSWORD: local_dev_password
+      - image: redis:7.4
+    environment:
+      DATABASE_URL: postgresql://timetable_user:local_dev_password@localhost:5432/timetable
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - checkout
+      - run:
+          name: Install development dependencies
+          command: pip install -r requirements-dev.txt
+      - run:
+          name: Wait for services and apply migrations
+          command: |
+            python - <<'PY'
+            import time
+            from pathlib import Path
+
+            import psycopg
+            import redis
+
+            database_url = "postgresql://timetable_user:local_dev_password@localhost:5432/timetable"
+            redis_url = "redis://localhost:6379/0"
+
+            for attempt in range(30):
+                try:
+                    with psycopg.connect(database_url, connect_timeout=2):
+                        pass
+                    redis.Redis.from_url(
+                        redis_url, socket_connect_timeout=2
+                    ).ping()
+                    break
+                except Exception:
+                    if attempt == 29:
+                        raise
+                    time.sleep(2)
+
+            with psycopg.connect(database_url) as conn:
+                for filename in (
+                    "migrations/001_schema.sql",
+                    "migrations/002_seed.sql",
+                ):
+                    conn.execute(Path(filename).read_text(encoding="utf-8"))
+                conn.commit()
+
+            print("Services ready; migrations applied.")
+            PY
+      - run:
+          name: Run integration tests
+          command: python -m pytest tests/test_integration.py -v
+
+  secret-scan:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: Install Gitleaks
+          command: |
+            VERSION=8.24.2
+            curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+            tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+            sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+      - run:
+          name: Scan for secrets
+          command: gitleaks detect --source . --redact --exit-code 1
+
+  docker-build:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build Docker image
+          command: docker build -t timetable-clash-python:ci .
+
+workflows:
+  timetable-clash-ci:
+    jobs:
+      - lint
+      - unit-tests:
+          requires:
+            - lint
+      - integration-tests:
+          requires:
+            - unit-tests
+      - secret-scan:
+          requires:
+            - integration-tests
+      - docker-build:
+          requires:
+            - secret-scan
