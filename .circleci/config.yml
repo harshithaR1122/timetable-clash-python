@@ -67,29 +67,92 @@ jobs:
           name: Scan repository files for secrets
           command: gitleaks dir . --redact --exit-code 1
 
-  docker-build:
+  docker-build-and-push:
+    parameters:
+      image_tag:
+        type: string
     docker:
       - image: cimg/base:stable
     steps:
       - checkout
       - setup_remote_docker
       - run:
-          name: Build Docker image
-          command: docker build -t timetable-clash-python:ci .
+          name: Build and push Docker images
+          command: |
+            set -eu
+
+            if [ -z "${DOCKERHUB_USER:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "Docker Hub credentials are missing from CircleCI project environment variables."
+              exit 1
+            fi
+
+            IMAGE="${DOCKERHUB_USER}/timetable-clash-python"
+            SHORT_SHA="$(printf '%s' "$CIRCLE_SHA1" | cut -c1-7)"
+
+            echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USER" --password-stdin
+
+            docker build \
+              --tag "${IMAGE}:<< parameters.image_tag >>" \
+              --tag "${IMAGE}:${CIRCLE_BRANCH}-${SHORT_SHA}" \
+              .
+
+            docker push "${IMAGE}:<< parameters.image_tag >>"
+            docker push "${IMAGE}:${CIRCLE_BRANCH}-${SHORT_SHA}"
+
+            docker logout
 
 workflows:
-  timetable-clash-ci:
+  main-full-ci:
     jobs:
-      - lint
+      - lint:
+          filters:
+            branches:
+              only: main
+
       - unit-tests:
           requires:
             - lint
+          filters:
+            branches:
+              only: main
+
       - integration-tests:
           requires:
             - unit-tests
+          filters:
+            branches:
+              only: main
+
       - secret-scan:
           requires:
             - integration-tests
-      - docker-build:
+          filters:
+            branches:
+              only: main
+
+      - docker-build-and-push:
+          name: publish-qa-image
+          image_tag: qa
           requires:
             - secret-scan
+          filters:
+            branches:
+              only: main
+
+  staging-build:
+    jobs:
+      - docker-build-and-push:
+          name: publish-stage-image
+          image_tag: stage
+          filters:
+            branches:
+              only: staging
+
+  prod-build:
+    jobs:
+      - docker-build-and-push:
+          name: publish-prod-image
+          image_tag: prod
+          filters:
+            branches:
+              only: prod
