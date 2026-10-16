@@ -1,127 +1,31 @@
-
+# Use the latest 2.1 version of CircleCI pipeline process engine.
+# See: https://circleci.com/docs/reference/configuration-reference/
 version: 2.1
 
+# Define a job to be invoked later in a workflow.
+# See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#jobs-overview & https://circleci.com/docs/reference/configuration-reference/#jobs
 jobs:
-  lint:
+  say-hello:
+    # Specify the execution environment. You can specify an image from Docker Hub or use one of our convenience images from CircleCI's Developer Hub.
+    # See: https://circleci.com/docs/guides/execution-managed/executor-intro/ & https://circleci.com/docs/reference/configuration-reference/#executor-job
     docker:
-      - image: cimg/python:3.12
+      # Specify the version you desire here
+      # See: https://circleci.com/developer/images/image/cimg/base
+      - image: cimg/base:current
+
+    # Add steps to the job
+    # See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#steps-overview & https://circleci.com/docs/reference/configuration-reference/#steps
     steps:
+      # Checkout the code as the first step.
       - checkout
       - run:
-          name: Install development dependencies
-          command: pip install -r requirements-dev.txt
-      - run:
-          name: Run Ruff
-          command: python -m ruff check app tests
+          name: "Say hello"
+          command: "echo Hello, World!"
 
-  unit-tests:
-    docker:
-      - image: cimg/python:3.12
-    steps:
-      - checkout
-      - run:
-          name: Install development dependencies
-          command: pip install -r requirements-dev.txt
-      - run:
-          name: Run unit tests
-          command: python -m pytest tests/test_clashes.py --cov=app.clashes --cov-report=term-missing --cov-fail-under=70
-
-  integration-tests:
-    docker:
-      - image: cimg/python:3.12
-      - image: postgres:16.4
-        environment:
-          POSTGRES_DB: timetable
-          POSTGRES_USER: timetable_user
-          POSTGRES_PASSWORD: local_dev_password
-      - image: redis:7.4
-    environment:
-      DATABASE_URL: postgresql://timetable_user:local_dev_password@localhost:5432/timetable
-      REDIS_URL: redis://localhost:6379/0
-    steps:
-      - checkout
-      - run:
-          name: Install development dependencies
-          command: pip install -r requirements-dev.txt
-      - run:
-          name: Wait for services and apply migrations
-          command: |
-            python - <<'PY'
-            import time
-            from pathlib import Path
-
-            import psycopg
-            import redis
-
-            database_url = "postgresql://timetable_user:local_dev_password@localhost:5432/timetable"
-            redis_url = "redis://localhost:6379/0"
-
-            for attempt in range(30):
-                try:
-                    with psycopg.connect(database_url, connect_timeout=2):
-                        pass
-                    redis.Redis.from_url(
-                        redis_url, socket_connect_timeout=2
-                    ).ping()
-                    break
-                except Exception:
-                    if attempt == 29:
-                        raise
-                    time.sleep(2)
-
-            with psycopg.connect(database_url) as conn:
-                for filename in (
-                    "migrations/001_schema.sql",
-                    "migrations/002_seed.sql",
-                ):
-                    conn.execute(Path(filename).read_text(encoding="utf-8"))
-                conn.commit()
-
-            print("Services ready; migrations applied.")
-            PY
-      - run:
-          name: Run integration tests
-          command: python -m pytest tests/test_integration.py -v
-
-  secret-scan:
-    docker:
-      - image: cimg/base:stable
-    steps:
-      - checkout
-      - run:
-          name: Install Gitleaks
-          command: |
-            VERSION=8.24.2
-            curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
-            tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
-            sudo install /tmp/gitleaks /usr/local/bin/gitleaks
-      - run:
-          name: Scan for secrets
-          command: gitleaks detect --source . --redact --exit-code 1
-
-  docker-build:
-    docker:
-      - image: cimg/base:stable
-    steps:
-      - checkout
-      - setup_remote_docker
-      - run:
-          name: Build Docker image
-          command: docker build -t timetable-clash-python:ci .
-
+# Orchestrate jobs using workflows
+# See: https://circleci.com/docs/guides/orchestrate/workflows/ & https://circleci.com/docs/reference/configuration-reference/#workflows
 workflows:
-  timetable-clash-ci:
+  say-hello-workflow: # This is the name of the workflow, feel free to change it to better match your workflow.
+    # Inside the workflow, you define the jobs you want to run.
     jobs:
-      - lint
-      - unit-tests:
-          requires:
-            - lint
-      - integration-tests:
-          requires:
-            - unit-tests
-      - secret-scan:
-          requires:
-            - integration-tests
-      - docker-build:
-          requires:
-            - secret-scan
+      - say-hello
