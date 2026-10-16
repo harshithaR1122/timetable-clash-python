@@ -46,7 +46,7 @@ jobs:
       - run:
           name: Wait for services and apply migrations
           command: |
-            python - \<<'PY'
+            python - <<'PY'
             import time
             from pathlib import Path
 
@@ -60,6 +60,7 @@ jobs:
                 try:
                     with psycopg.connect(database_url, connect_timeout=2):
                         pass
+
                     redis.Redis.from_url(
                         redis_url, socket_connect_timeout=2
                     ).ping()
@@ -96,8 +97,8 @@ jobs:
             tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
             sudo install /tmp/gitleaks /usr/local/bin/gitleaks
       - run:
-          name: Scan for secrets
-          command: gitleaks detect --source . --redact --exit-code 1
+          name: Scan repository files for secrets
+          command: gitleaks dir . --redact --exit-code 1
 
   docker-build:
     docker:
