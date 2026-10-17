@@ -1,0 +1,53 @@
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: timetable-migrate
+  namespace: stage
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: timetable-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: postgres:16.4
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until pg_isready -h postgres -p 5432 -U timetable_user -d timetable; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              psql -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /migrations/001_schema.sql
+              psql -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /migrations/002_seed.sql
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: timetable-db-secret
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: timetable-db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: timetable-db-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: timetable-migrations
