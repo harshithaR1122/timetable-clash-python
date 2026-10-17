@@ -1,116 +1,353 @@
-# Timetable and Clash Detection
+# Timetable Clash Detection System
 
-**Language:** Python (FastAPI) &nbsp;|&nbsp; **Needs:** Postgres + Redis
+A containerized timetable management and clash detection application built with **Python, FastAPI, PostgreSQL, Redis, Docker, CircleCI, and Kubernetes**.
 
-This is a **starter**. The application already works. Your job is everything
-that gets it building, tested and running in CI.
+The project focuses on delivering a working application through automated testing, container image publishing, and separate QA, staging, and production environments.
 
----
+## Table of Contents
 
-## You do not need Python installed
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [Architecture](#architecture)
+- [Timetable Rules](#timetable-rules)
+- [API Endpoints](#api-endpoints)
+- [Run Locally](#run-locally)
+- [Testing](#testing)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Docker Image](#docker-image)
+- [Kubernetes Deployment](#kubernetes-deployment)
+- [Project Structure](#project-structure)
 
-You will build this into a container, and the container brings its own
-Python 3.12. You are not being asked to extend the app — you are being asked
-to ship it.
+## Features
 
----
+- Create, list, and delete timetable entries.
+- Detect room, teacher, and batch scheduling conflicts.
+- Check potential clashes without saving a class.
+- Generate timetable views by batch, teacher, and room.
+- Find available time slots during college hours.
+- Persist data using PostgreSQL.
+- Use Redis to cache timetable views and invalidate cached data after changes.
+- Run database migrations before application startup.
+- Automate linting, unit tests, integration tests, secret scanning, and Docker image publishing.
+- Maintain separate Kubernetes environments for QA, staging, and production.
 
-## 1. What this app needs
+## Technology Stack
 
-| | |
+| Component | Technology |
 |---|---|
-| **Runtime** | Python 3.12 |
-| **Install dependencies** | `pip install -r requirements.txt` |
-| **Start the app** | `uvicorn app.main:app --host 0.0.0.0 --port 8080` |
-| **Listens on** | port 8080, bound to `0.0.0.0` |
-| **Environment variables** | `DATABASE_URL`, `REDIS_URL` |
-| **Needs running first** | Postgres, Redis, and the migrations applied |
+| Language | Python 3.12 |
+| API framework | FastAPI |
+| Database | PostgreSQL |
+| Cache | Redis |
+| Containerization | Docker and Docker Compose |
+| CI/CD | CircleCI |
+| Container registry | Docker Hub |
+| Orchestration | Kubernetes with Minikube |
+| Testing | pytest |
+| Linting | Ruff |
+| Secret scanning | Gitleaks |
 
-### What it does
+## Architecture
 
-Departments enter classes: a subject, a teacher, a room, a batch and a time slot. The system refuses anything that clashes and explains what it collided with, then generates the timetable three ways - per batch, per teacher and per room - from the same set of classes.
-
-### Endpoints
-
+```text
+Developer
+   |
+   v
+GitHub Repository
+   |
+   v
+CircleCI Pipeline
+   |
+   +--> Lint
+   +--> Unit Tests
+   +--> Integration Tests
+   +--> Secret Scan
+   +--> Docker Build and Publish
+                 |
+                 v
+             Docker Hub
+                 |
+                 v
+          Kubernetes Cluster
+                 |
+       +---------+---------+
+       |         |         |
+       v         v         v
+       QA      Staging  Production
+       |         |         |
+       +---------+---------+
+                 |
+       FastAPI + PostgreSQL
+                 |
+               Redis
 ```
-GET  /health
-GET  /classes                     everything on the timetable
-POST /classes                     {"day":"mon","start":"10:00","end":"11:00",
-                                   "subject":"DBMS","teacher":"Rao",
-                                   "room":"A101","batch":"CSE-3A"}
-POST /classes/check               the same check with nothing written - a dry run
-DELETE /classes/{id}
-GET  /timetable/{kind}/{value}    kind: batch | teacher | room
-GET  /free/{day}?minutes=60       gaps long enough to put a class in
+
+The application exposes HTTP endpoints on port `8080`. PostgreSQL stores timetable data, while Redis provides caching for timetable views. SQL migration files initialize the database and sample data.
+
+## Timetable Rules
+
+### Clash detection
+
+The application checks overlapping time intervals and identifies conflicts involving:
+
+- **Room:** the same room is booked for overlapping classes.
+- **Teacher:** the same teacher is scheduled for overlapping classes.
+- **Batch:** the same batch has overlapping classes.
+
+A dry-run endpoint checks for conflicts without persisting the proposed class.
+
+### Boundary rule
+
+Time intervals use the **half-open interval** convention:
+
+`[start, end)`
+
+Two classes clash when:
+
+```python
+a_start < b_end and b_start < a_end
 ```
 
-`/health` reports Postgres and Redis **separately**. If it says
-`postgres: false` the app started fine and your compose wiring is wrong —
-do not go looking in the application code.
+Therefore, a class scheduled from `10:00–11:00` does not clash with another from `11:00–12:00`, because they only touch at the boundary. However, classes scheduled from `10:00–11:00` and `10:30–11:30` do clash.
 
-### Migrations
+### Scheduling constraints
 
-`migrations/` holds `.sql` files applied **in filename order** before the app
-starts. They create the tables and insert sample data. A container running
-`psql` over them in order is enough; you do not need a migration tool.
+- Teaching days: Monday to Saturday.
+- College hours: 09:00–17:00.
+- Protected lunch break: 13:00–14:00.
+- Minimum class duration: 30 minutes.
+- Maximum class duration: 180 minutes.
 
----
+Classes outside college hours, during lunch, or outside the allowed duration are rejected.
 
-## 2. What you must write
+## API Endpoints
 
-| File | What it has to do |
-|---|---|
-| `Dockerfile` | Install dependencies **before** copying source, pin the base image, do not run as root. |
-| `docker-compose.yml` | App + Postgres + Redis + a migration step, one `docker compose up`. |
-| `.circleci/config.yml` | lint → unit tests → integration tests → secret scan → image build |
-| Unit tests | For `app/clashes.py`. No database, no network. |
-| Integration tests | Against a real Postgres and Redis as CircleCI service containers. |
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/health` | Check application, PostgreSQL, and Redis health |
+| GET | `/classes` | List timetable entries |
+| POST | `/classes` | Create a timetable entry |
+| POST | `/classes/check` | Check clashes without saving |
+| DELETE | `/classes/{id}` | Delete a timetable entry |
+| GET | `/timetable/{kind}/{value}` | View a timetable by batch, teacher, or room |
+| GET | `/free/{day}?minutes=60` | Find available time slots |
 
-Then push your image to **your own Docker Hub account**, tagged `:1.0`.
-
-### When it works
-
-```bash
-docker compose up --build
-curl localhost:8080/health
-```
+### Example class request
 
 ```json
-{"status":"ok","postgres":true,"redis":true}
+{
+  "day": "mon",
+  "start": "10:00",
+  "end": "11:00",
+  "subject": "DBMS",
+  "teacher": "Rao",
+  "room": "A101",
+  "batch": "CSE-3A"
+}
 ```
 
----
+### Health response
 
-## Where the marks are
+```json
+{
+  "status": "ok",
+  "postgres": true,
+  "redis": true
+}
+```
 
-`app/clashes.py` is **pure logic** — plain functions over plain data, no
-database and no HTTP. Start your tests there. Use pytest:
-`pytest --cov=app --cov-report=term-missing`. Minimum 70%.
+## Run Locally
 
-`overlaps` is four lines and deserves about ten tests: partial overlap from the left, partial from the right, full containment either way, identical slots, touching at the boundary, and completely separate. Then `find_clashes` on top of it - room, teacher and batch each clashing on their own, all three at once, and the same slot on a different day clashing with nothing.
+### Prerequisites
 
-## Why Redis is here
+- Git
+- Docker Desktop with a working Docker engine
+- Docker Compose
 
-The generated timetable views are read constantly - every student, every teacher, every noticeboard - and written perhaps twice a term. That is the shape a cache is for. Grouping every class by day and sorting it is wasted work on the four hundredth identical request.
+Python is not required on the host when running the application through Docker Compose.
 
-The important half is invalidation: adding or deleting one class can change a batch view, a teacher view and a room view at once, so every write drops the whole `tt:` prefix rather than trying to be clever about which three keys went stale. A cache that serves a deleted class is worse than no cache.
+### 1. Clone the repository
 
-## The hard part
+```bash
+git clone https://github.com/harshithaR1122/timetable-clash-python.git
+cd timetable-clash-python
+```
 
-**Overlap is not equality. 10:00-11:00 and 10:30-11:30 clash, and students usually miss that case.**
+### 2. Start the application
 
-Then decide the boundary: does a class ending at 11:00 clash with one starting at 11:00? Say which you chose and why.
+```bash
+docker compose up --build -d
+```
 
-Write your answer in your README. It is worth more marks than the feature.
+### 3. Verify application health
 
----
+```bash
+curl http://localhost:8080/health
+```
 
-## Getting unstuck
+The health response should report `"status": "ok"` and successful PostgreSQL and Redis checks.
 
-| Symptom | Almost always |
+### 4. Inspect running services
+
+```bash
+docker compose ps
+```
+
+### 5. View logs
+
+```bash
+docker compose logs -f app
+```
+
+To stop the services:
+
+```bash
+docker compose down
+```
+
+This command stops and removes the Compose containers and network. Named volumes, if configured, are retained unless explicitly removed.
+
+## Testing
+
+### Unit tests
+
+Unit tests cover the clash-detection logic independently of the database and network.
+
+```bash
+pytest -v
+```
+
+### Coverage report
+
+```bash
+pytest --cov=app --cov-report=term-missing
+```
+
+The project specification sets a minimum coverage target of 70%.
+
+### Linting
+
+```bash
+ruff check .
+```
+
+### Integration tests
+
+Integration tests exercise the application with PostgreSQL and Redis services. CircleCI provisions service containers for the integration-test job.
+
+The CI pipeline is configured to run linting, unit tests, integration tests, secret scanning, and Docker image building and publishing. The recorded pipelines for `main`, `staging`, and `prod` completed successfully during project verification.
+
+## CI/CD Pipeline
+
+The CircleCI configuration is located at `.circleci/config.yml`.
+
+The pipeline includes:
+
+1. **Lint:** check code quality using Ruff.
+2. **Unit tests:** verify clash-detection logic.
+3. **Integration tests:** test application integration with PostgreSQL and Redis.
+4. **Secret scan:** scan for accidentally committed secrets using Gitleaks.
+5. **Docker build and publish:** build the application image and publish it to Docker Hub.
+
+The repository uses separate `main`, `staging`, and `prod` branches for the promotion workflow. Pull requests were used to promote changes through the branches.
+
+## Docker Image
+
+Docker Hub repository:
+
+**[`harshithar1122/timetable-clash-python`](https://hub.docker.com/r/harshithar1122/timetable-clash-python)**
+
+The following image tags were published and verified during the project workflow:
+
+| Environment / purpose | Tag |
 |---|---|
-| `/health` says `postgres: false` | Wrong hostname. In compose the host is the **service name**, not `localhost`. |
-| Page will not load, logs fine | No `ports:` mapping, or bound to `127.0.0.1` not `0.0.0.0`. |
-| `relation "..." does not exist` | Migrations did not run, or the app started before they finished. |
-| Build takes minutes each time | `COPY . .` is above your dependency install. |
-| CI cannot reach the database | In CircleCI service containers the host **is** `localhost` — opposite of compose. |
+| QA / main | `qa`, `main-7d949d0` |
+| Staging | `stage`, `staging-cf1042b` |
+| Production | `prod`, `prod-b8f81e4` |
+
+Pull an image with:
+
+```bash
+docker pull harshithar1122/timetable-clash-python:qa
+```
+
+Environment tags are convenient references. Commit-specific tags make it easier to identify the build associated with a particular revision.
+
+## Kubernetes Deployment
+
+The Kubernetes manifests are organized by environment:
+
+- `k8s/qa/`
+- `k8s/stage/`
+- `k8s/prod/`
+
+The local Kubernetes cluster is managed using Minikube with the Docker driver.
+
+Each environment contains deployments for the application, PostgreSQL, and Redis. The application deployment was verified with two ready replicas in each environment during project testing. Migration jobs completed successfully.
+
+### Check deployment status
+
+```bash
+kubectl get deployments,pods -n qa
+kubectl get deployments,pods -n stage
+kubectl get deployments,pods -n prod
+```
+
+### Check services
+
+```bash
+kubectl get services -n qa
+kubectl get services -n stage
+kubectl get services -n prod
+```
+
+### Test an environment using port forwarding
+
+For QA:
+
+```bash
+kubectl port-forward -n qa service/timetable-app 8081:8080
+```
+
+In a separate terminal:
+
+```bash
+curl http://localhost:8081/health
+```
+
+Stop port forwarding with `Ctrl + C` when finished.
+
+The staging and production environments can be tested similarly using different local ports.
+
+> The Kubernetes manifests define the deployment configuration. Apply or update manifests using the project's existing deployment procedure and verify the target environment before making changes.
+
+## Project Structure
+
+```text
+timetable-clash-python/
+├── .circleci/
+│   └── config.yml
+├── app/
+│   └── clashes.py
+├── k8s/
+│   ├── qa/
+│   ├── stage/
+│   └── prod/
+├── migrations/
+├── tests/
+├── .dockerignore
+├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── requirements-dev.txt
+└── ruff.toml
+```
+
+## Author
+
+**Harshitha R**
+
+GitHub: [@harshithaR1122](https://github.com/harshithaR1122)
+
+Repository: [timetable-clash-python](https://github.com/harshithaR1122/timetable-clash-python)
